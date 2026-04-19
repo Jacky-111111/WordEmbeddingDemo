@@ -205,8 +205,8 @@ output {
 .user-feature-inline-message {
     position: absolute;
     margin-left: 10px;  /* good looking? */
-    /* color: #d11a2a;
-    font-weight: 600; */
+    color: red;
+    /* font-weight: 600; */
     white-space: nowrap;
 }
 
