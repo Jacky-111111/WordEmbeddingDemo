@@ -760,59 +760,103 @@ class Demo {
         }
     }
 
-    // handle user submitting feature words into form
-    processFeatureInput() {
-        // clear legacy bottom message and inline row messages
-        document.getElementById("user-feature-message").innerText = "";
-        this.clearFeatureInlineMessages();
-
-        // console.log(`this.idx0 = ${this.idx0}, this.idx1 = ${this.idx1}`)
-        let selectedNames = [`feature${this.idx0}`, `feature${this.idx1}`]; //.user-feature-words.
-        // temporary input to be validated
-        let featureWordsPairsInput = [Array(2), Array(2)];
-        for (let i=0; i<2; i++) {
-            for (let j=0; j<2; j++) {
-                // split words across new lines
-                // convert to lowercase (#39)
-                featureWordsPairsInput[i][j] =
-                    document.querySelector(`.user-feature-words.${selectedNames[i]}.set${j}`).value.toLowerCase().split('\n');
-            }
+    // read one feature row(dimension)'s two word lists from textareas
+    getFeatureWordsInput(featureIdx) {
+        const selectedName = `feature${featureIdx}`;
+        let featureWordsPairInput = Array(2);
+        for (let j=0; j<2; j++) {
+            // split words across new lines
+            // convert to lowercase (#39)
+            featureWordsPairInput[j] =
+                document.querySelector(`.user-feature-words.${selectedName}.set${j}`).value.toLowerCase().split('\n');
         }
+        return featureWordsPairInput;
+    }
 
-        // simple user input validation
+    // validate one feature row and write message on failure
+    validateFeatureInput(featureIdx, featureWordsPairInput) {
         // ensure feature sets are the same length
-        for (let i=0; i<2; i++) {
-            if (featureWordsPairsInput[i][0].length !== featureWordsPairsInput[i][1].length) {
-                const featureIdx = Number(selectedNames[i].replace("feature", ""));
-                this.setFeatureInlineMessage(featureIdx, "Ensure feature word sets are same length");
-                return;
-            }
+        if (featureWordsPairInput[0].length !== featureWordsPairInput[1].length) {
+            this.setFeatureInlineMessage(featureIdx, "Ensure feature word sets are same length");
+            return false;
         }
 
         // ensure all words in vocab
-        for (let i=0; i<2; i++) {
-            for (let j=0; j<2; j++) {
-                for (const word of featureWordsPairsInput[i][j]) {
-                    if (!this.vocab.has(word)) {
-                        const featureIdx = Number(selectedNames[i].replace("feature", ""));
-                        this.setFeatureInlineMessage(featureIdx, `"${word}" not found`);
-                        return;
-                    }
+        for (let j=0; j<2; j++) {
+            for (const word of featureWordsPairInput[j]) {
+                if (!this.vocab.has(word)) {
+                    this.setFeatureInlineMessage(featureIdx, `"${word}" not found`);
+                    return false;
                 }
             }
         }
+        return true;
+    }
 
-        // (shallow) copy feature words after validation
-        this.featureWordsPairs = featureWordsPairsInput;
+    // save one validated feature row to model
+    saveFeatureInput(featureIdx, featureWordsPairInput) {
+        this.featureWordsPairs[featureIdx] = featureWordsPairInput;
+        const selectedName = `feature${featureIdx}`;
+        this.featureNames[featureIdx] =
+            this.formatFeatureName(document.querySelector(`.user-feature-name.${selectedName}`).value);
+    }
 
-        // read feature names from inputs, adding bracket syntax
-        this.featureNames[0] = this.formatFeatureName(document.querySelector(`.user-feature-name.${selectedNames[0]}`).value); //.user-feature-name.feature${1}
-        this.featureNames[1] = this.formatFeatureName(document.querySelector(`.user-feature-name.${selectedNames[1]}`).value);
+    // sync scatter axis button labels with selected feature names
+    updateScatterButtonLabels() {
+        document.getElementById("scatter-button0").innerText = this.featureNames[this.idx0];
+        document.getElementById("scatter-button1").innerText = this.featureNames[this.idx1];
+    }
 
-        // write names to buttons
-        document.getElementById("scatter-button0").innerText = this.featureNames[0];
-        document.getElementById("scatter-button1").innerText = this.featureNames[1];
+    // handle one row submit: validate current row, then paired axis row if needed
+    submitFeature(featureIdx) {
+        document.getElementById("user-feature-message").innerText = "";
+        this.clearFeatureInlineMessages();
 
+        const featureWordsPairInput = this.getFeatureWordsInput(featureIdx);
+        if (!this.validateFeatureInput(featureIdx, featureWordsPairInput)) {
+            return;
+        }
+        this.saveFeatureInput(featureIdx, featureWordsPairInput);
+
+        const isAxisFeature = (featureIdx === this.idx0 || featureIdx === this.idx1);
+        if (isAxisFeature) {
+            // lightweight rule: if one axis row is submitted, validate the other axis row too (between X-axis and Z-axis)
+            const otherAxisIdx = (featureIdx === this.idx0) ? this.idx1 : this.idx0;
+            const otherFeatureWordsPairInput = this.getFeatureWordsInput(otherAxisIdx);
+            if (!this.validateFeatureInput(otherAxisIdx, otherFeatureWordsPairInput)) {
+                return;
+            }
+            this.saveFeatureInput(otherAxisIdx, otherFeatureWordsPairInput);
+            this.updateScatterButtonLabels();
+            this.plotScatter();
+        }
+    }
+
+    // validate and apply currently selected X/Z-axis dimensions
+    // used by axis dropdown changes and initial page loading
+    processFeatureInput() {
+        document.getElementById("user-feature-message").innerText = "";
+        this.clearFeatureInlineMessages();
+
+        const axisIdxs = [this.idx0, this.idx1];
+        const featureInputs = new Map();
+        let hasError = false;
+
+        for (const featureIdx of axisIdxs) {
+            const featureWordsPairInput = this.getFeatureWordsInput(featureIdx);
+            featureInputs.set(featureIdx, featureWordsPairInput);
+            if (!this.validateFeatureInput(featureIdx, featureWordsPairInput)) {
+                hasError = true;
+            }
+        }
+        if (hasError) {
+            return;
+        }
+
+        for (const featureIdx of axisIdxs) {
+            this.saveFeatureInput(featureIdx, featureInputs.get(featureIdx));
+        }
+        this.updateScatterButtonLabels();
         this.plotScatter();
     }
 
