@@ -770,9 +770,14 @@ class Demo {
             for (let j=0; j<2; j++) {
                 // split words across new lines
                 // convert to lowercase (#39)
-                featureWordsPairsInput[i][j] =
-                    // filter out empty strings and convert to lowercase
-                    document.querySelector(`.user-feature-words.${selectedNames[i]}.set${j}`).value.split(/\r?\n/).map((word) => word.trim().toLowerCase()).filter(Boolean);
+                const rawInput = document
+                    .querySelector(`.user-feature-words.${selectedNames[i]}.set${j}`)
+                    .value
+                    // remove trailing blank lines (kept the blank lines in the middle to trigger '"" not found' error message)
+                    .replace(/(?:\r?\n[^\S\r\n]*)+$/, "");
+                featureWordsPairsInput[i][j] = rawInput
+                    .split(/\r?\n/)
+                    .map((word) => word.trim().toLowerCase());
             }
         }
 
