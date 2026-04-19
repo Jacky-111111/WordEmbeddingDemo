@@ -621,14 +621,20 @@ class Demo {
             }
         });
 
-        // if word added/removed, clear selection and similarity redlines (switch to default mode)
+        // update selection on add/remove without entering similarity mode
         if (wordModified) {
-            this.selectedWord = "";
+            if (addedWords.length > 0) {
+                // keep red-highlighted feedback in scatter by selecting the latest added word
+                this.selectedWord = addedWords[addedWords.length - 1];
+            } else if (removedWords.length > 0) {
+                // remove-only, clears current active word selection
+                this.selectedWord = "";
+            }
             this.formatMagnitudePlot("default");
             this.highlightVectorAxis(false);
             this.updateSimilarityLines(true, false);
         } else {
-            // keep current status unchanged when NO VALID word added/removed
+            // if there is NO VALID add/remove, keep current status quo
             if (this.selectedWord) {
                 this.formatMagnitudePlot("similarity");
                 this.highlightVectorAxis(true);
