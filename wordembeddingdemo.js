@@ -33,6 +33,7 @@ class Demo {
 
         // words involved in the computation of analogy (#12)
         this.analogy = {};  // default empty Object
+        this.oddOneOutAnimationFrame = null;
         
         // words to show in vector display
         this.defaultVectorWords = ["queen", "king", "girl", "boy", "woman", "man"];
@@ -266,6 +267,7 @@ class Demo {
         );
 
         this.formatMagnitudePlot("default");
+        this.resetOddOneOutResult();
     }
 
     applyLoadedSource(sourceId, modelState, nearestWords) {
@@ -330,6 +332,13 @@ class Demo {
         userFeaturesForm.addEventListener("change", (event) => {
             this.handleFeatureDraftChange(event);
         });
+
+        const oddOneOutForm = document.getElementById("odd-one-out-form");
+        if (oddOneOutForm) {
+            oddOneOutForm.addEventListener("input", () => {
+                this.resetOddOneOutResult();
+            });
+        }
 
         this.listenersBound = true;
     }
@@ -953,6 +962,329 @@ class Demo {
     cleanWordInput(word) {
         word = word.trim().toLowerCase().replace(/\W/g, '');
         return word;
+    }
+
+    setOddOneOutMessage(message, isError = false) {
+        const messageElem = document.getElementById("odd-one-out-message");
+        if (!messageElem) {
+            return;
+        }
+        messageElem.innerText = message;
+        messageElem.style.color = isError ? "darkred" : "darkgreen";
+    }
+
+    resetOddOneOutResult() {
+        const result = document.getElementById("odd-one-out-word-result");
+        if (result) {
+            result.value = "----";
+        }
+        this.setOddOneOutMessage("");
+
+        const plotElem = document.getElementById("odd-one-out-plot");
+        if (plotElem && plotElem.data) {
+            Plotly.purge(plotElem);
+        }
+        if (this.oddOneOutAnimationFrame !== null) {
+            cancelAnimationFrame(this.oddOneOutAnimationFrame);
+            this.oddOneOutAnimationFrame = null;
+        }
+    }
+
+    getOddOneOutInputWords() {
+        const ids = [
+            "odd-one-out-word-1",
+            "odd-one-out-word-2",
+            "odd-one-out-word-3",
+            "odd-one-out-word-4"
+        ];
+        return ids.map(id => this.cleanWordInput(document.getElementById(id).value));
+    }
+
+    // pick the word with lowest average cosine similarity to the other three words
+    computeOddOneOut(words) {
+        const meanSimilarity = new Map();
+        for (let i = 0; i < words.length; i++) {
+            const vecI = this.vecs.get(words[i]);
+            let similaritySum = 0;
+            for (let j = 0; j < words.length; j++) {
+                if (i === j) {
+                    continue;
+                }
+                similaritySum += vecI.dot(this.vecs.get(words[j]));
+            }
+            meanSimilarity.set(words[i], similaritySum / (words.length - 1));
+        }
+
+        const sortedByMeanSimilarity = words
+            .map(word => [word, meanSimilarity.get(word)])
+            .sort((a, b) => a[1] - b[1]);
+
+        return {
+            oddWord: sortedByMeanSimilarity[0][0],
+            meanSimilarity
+        };
+    }
+
+    getFallbackOrthogonalUnit(axisX) {
+        const dim = axisX.length;
+        let fallbackIdx = 0;
+        for (let i = 1; i < dim; i++) {
+            if (Math.abs(axisX[i]) < Math.abs(axisX[fallbackIdx])) {
+                fallbackIdx = i;
+            }
+        }
+        const basis = new Vector(new Array(dim).fill(0));
+        basis[fallbackIdx] = 1;
+        const orthogonal = basis.sub(axisX.scale(basis.dot(axisX)));
+        return orthogonal.norm() > 1e-8 ? orthogonal.unit() : basis.unit();
+    }
+
+    // lightweight 2D projection for visualization (not full PCA)
+    projectOddOneOutWords2D(words) {
+        const vectors = words.map(word => this.vecs.get(word));
+        let axisX = vectors[0].sub(vectors[1]);
+        if (axisX.norm() <= 1e-8) {
+            axisX = vectors[0];
+        }
+        axisX = axisX.unit();
+
+        let axisYSeed = vectors[2].sub(vectors[3]);
+        if (axisYSeed.norm() <= 1e-8) {
+            axisYSeed = vectors[2];
+        }
+        let axisY = axisYSeed.sub(axisX.scale(axisYSeed.dot(axisX)));
+        if (axisY.norm() <= 1e-8) {
+            axisY = this.getFallbackOrthogonalUnit(axisX);
+        } else {
+            axisY = axisY.unit();
+        }
+
+        return words.map(word => {
+            const vec = this.vecs.get(word);
+            return {
+                x: vec.dot(axisX),
+                y: vec.dot(axisY)
+            };
+        });
+    }
+
+    buildOddOneOutPairStats(words) {
+        const pairs = [];
+        for (let i = 0; i < words.length; i++) {
+            for (let j = i + 1; j < words.length; j++) {
+                const similarity = this.vecs.get(words[i]).dot(this.vecs.get(words[j]));
+                pairs.push({i, j, similarity});
+            }
+        }
+        return pairs;
+    }
+
+    getOddOneOutAxisBounds(coords) {
+        const xVals = coords.map(coord => coord.x);
+        const yVals = coords.map(coord => coord.y);
+        const xMin = Math.min(...xVals);
+        const xMax = Math.max(...xVals);
+        const yMin = Math.min(...yVals);
+        const yMax = Math.max(...yVals);
+        const xPad = Math.max(0.15, (xMax - xMin) * 0.35);
+        const yPad = Math.max(0.15, (yMax - yMin) * 0.35);
+        return {
+            xRange: [xMin - xPad, xMax + xPad],
+            yRange: [yMin - yPad, yMax + yPad]
+        };
+    }
+
+    getOddOneOutLineAndLabelTraces(coords, pairStats) {
+        const lineTraces = pairStats.map(pair => {
+            const coordI = coords[pair.i];
+            const coordJ = coords[pair.j];
+            // map cosine similarity [-1,1] to [0,1] for visual encoding
+            const simNorm = Math.max(0, Math.min(1, (pair.similarity + 1) / 2));
+            const red = Math.round(210 - 70 * simNorm);
+            const green = Math.round(70 + 130 * simNorm);
+            const blue = Math.round(70 + 70 * simNorm);
+            return {
+                x: [coordI.x, coordJ.x],
+                y: [coordI.y, coordJ.y],
+                mode: "lines",
+                type: "scatter",
+                hoverinfo: "skip",
+                line: {
+                    width: 1.5 + 2.5 * simNorm,
+                    color: `rgba(${red}, ${green}, ${blue}, 0.8)`
+                },
+                showlegend: false
+            };
+        });
+
+        const labelTrace = {
+            x: pairStats.map(pair => (coords[pair.i].x + coords[pair.j].x) / 2),
+            y: pairStats.map(pair => (coords[pair.i].y + coords[pair.j].y) / 2),
+            mode: "text",
+            type: "scatter",
+            text: pairStats.map(pair => `sim ${pair.similarity.toFixed(2)}`),
+            textfont: {size: 11, color: "#555"},
+            hoverinfo: "skip",
+            showlegend: false
+        };
+
+        return [...lineTraces, labelTrace];
+    }
+
+    renderOddOneOutPlot(words, coords, oddWord, pairStats, axisBounds, isNewPlot = false) {
+        const colors = words.map(word => (word === oddWord ? "#d62728" : "#1f77b4"));
+        const x = coords.map(coord => coord.x);
+        const y = coords.map(coord => coord.y);
+        const nodeTrace = {
+            x,
+            y,
+            mode: "markers+text",
+            type: "scatter",
+            text: words,
+            textposition: "top center",
+            hovertemplate: "%{text}<extra></extra>",
+            showlegend: false,
+            marker: {
+                color: colors,
+                size: 16,
+                line: {color: "#222", width: 1}
+            }
+        };
+        const data = [...this.getOddOneOutLineAndLabelTraces(coords, pairStats), nodeTrace];
+        const layout = {
+            title: "Odd One Out (2D projection)",
+            margin: {l: 30, r: 10, t: 35, b: 30},
+            xaxis: {
+                title: "Projection X",
+                zeroline: true,
+                fixedrange: true,
+                range: axisBounds.xRange
+            },
+            yaxis: {
+                title: "Projection Y",
+                zeroline: true,
+                fixedrange: true,
+                range: axisBounds.yRange
+            }
+        };
+        if (isNewPlot) {
+            Plotly.newPlot("odd-one-out-plot", data, layout, {displayModeBar: false, responsive: true});
+        } else {
+            Plotly.react("odd-one-out-plot", data, layout, {displayModeBar: false, responsive: true});
+        }
+    }
+
+    animateOddOneOutSpring(words, finalCoords, oddWord, pairStats, axisBounds) {
+        if (this.oddOneOutAnimationFrame !== null) {
+            cancelAnimationFrame(this.oddOneOutAnimationFrame);
+            this.oddOneOutAnimationFrame = null;
+        }
+
+        const currentCoords = finalCoords.map(coord => ({
+            x: coord.x + (Math.random() - 0.5) * 0.9,
+            y: coord.y + (Math.random() - 0.5) * 0.9
+        }));
+        const velocity = finalCoords.map(() => ({x: 0, y: 0}));
+        const springK = 0.16;
+        const midpointRepelBase = 0.028;
+        const jitterStrength = 0.003;
+        const damping = 0.88;
+        const maxFrames = 180;
+        let frame = 0;
+
+        this.renderOddOneOutPlot(words, currentCoords, oddWord, pairStats, axisBounds, false);
+
+        const tick = () => {
+            frame += 1;
+            for (let i = 0; i < currentCoords.length; i++) {
+                const dx = finalCoords[i].x - currentCoords[i].x;
+                const dy = finalCoords[i].y - currentCoords[i].y;
+                velocity[i].x += springK * dx;
+                velocity[i].y += springK * dy;
+            }
+
+            // Midpoint forces: each line midpoint repels its two endpoint nodes.
+            // Lower similarity -> stronger midpoint repulsion, making outliers stand out.
+            for (const pair of pairStats) {
+                const pI = currentCoords[pair.i];
+                const pJ = currentCoords[pair.j];
+                const midX = (pI.x + pJ.x) / 2;
+                const midY = (pI.y + pJ.y) / 2;
+                const simNorm = Math.max(0, Math.min(1, (pair.similarity + 1) / 2));
+                const repelStrength = midpointRepelBase * (1.2 - simNorm);
+
+                for (const idx of [pair.i, pair.j]) {
+                    const px = currentCoords[idx].x;
+                    const py = currentCoords[idx].y;
+                    let dirX = px - midX;
+                    let dirY = py - midY;
+                    const mag = Math.hypot(dirX, dirY) + 1e-6;
+                    dirX /= mag;
+                    dirY /= mag;
+                    velocity[idx].x += dirX * repelStrength;
+                    velocity[idx].y += dirY * repelStrength;
+                }
+            }
+
+            // small stochastic motion so "forces" remain visible, then damp out naturally
+            const jitterScale = jitterStrength * Math.max(0.2, (maxFrames - frame) / maxFrames);
+            for (let i = 0; i < currentCoords.length; i++) {
+                velocity[i].x += (Math.random() - 0.5) * jitterScale;
+                velocity[i].y += (Math.random() - 0.5) * jitterScale;
+                velocity[i].x *= damping;
+                velocity[i].y *= damping;
+                currentCoords[i].x += velocity[i].x;
+                currentCoords[i].y += velocity[i].y;
+            }
+
+            this.renderOddOneOutPlot(words, currentCoords, oddWord, pairStats, axisBounds, false);
+
+            if (frame < maxFrames) {
+                this.oddOneOutAnimationFrame = requestAnimationFrame(tick);
+            } else {
+                this.oddOneOutAnimationFrame = null;
+                this.renderOddOneOutPlot(words, finalCoords, oddWord, pairStats, axisBounds, false);
+            }
+        };
+
+        this.oddOneOutAnimationFrame = requestAnimationFrame(tick);
+    }
+
+    processOddOneOut() {
+        if (!this.guardModelReady("Load an embedding source first.")) {
+            return;
+        }
+        this.resetOddOneOutResult();
+
+        const words = this.getOddOneOutInputWords();
+        if (words.some(word => word === "")) {
+            this.setOddOneOutMessage("Enter exactly four words.", true);
+            return;
+        }
+        if ((new Set(words)).size !== 4) {
+            this.setOddOneOutMessage("Use four distinct words.", true);
+            return;
+        }
+
+        for (const word of words) {
+            if (!this.vocab.has(word)) {
+                this.setOddOneOutMessage(`"${word}" not found`, true);
+                return;
+            }
+        }
+
+        const {oddWord, meanSimilarity} = this.computeOddOneOut(words);
+        const result = document.getElementById("odd-one-out-word-result");
+        result.value = oddWord;
+
+        const oddMeanSimilarity = meanSimilarity.get(oddWord);
+        this.setOddOneOutMessage(`Lowest mean cosine similarity: ${oddMeanSimilarity.toFixed(3)}`, false);
+
+        const coords = this.projectOddOneOutWords2D(words);
+        const pairStats = this.buildOddOneOutPairStats(words);
+        const axisBounds = this.getOddOneOutAxisBounds(coords);
+        this.renderOddOneOutPlot(words, coords, oddWord, pairStats, axisBounds, true);
+        this.animateOddOneOutSpring(words, coords, oddWord, pairStats, axisBounds);
     }
 
     // handle user adding/removing words in form
@@ -1705,7 +2037,7 @@ window.addEventListener('resize', function() {
     if (!demo.modelReady) {
         return;
     }
-    const plotsToResize = ["plotly-scatter", "plotly-vector", "plotly-magnify"];
+    const plotsToResize = ["plotly-scatter", "plotly-vector", "plotly-magnify", "odd-one-out-plot"];
     plotsToResize.forEach(id => {
         const container = document.getElementById(id);
         if (!container) {
