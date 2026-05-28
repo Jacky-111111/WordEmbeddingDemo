@@ -1224,12 +1224,16 @@ class Demo {
             }
         }
 
-        // Merge OddOneOut 4 words into scatter list without removal
-        this.scatterWords = [...new Set([...this.scatterWords, ...words])];
+        // Make layout identical for the same 4-word set:
+        // canonicalize words so the word order does not affect output geometry
+        const canonicalWords = words.slice().sort();
 
-        const vectors = words.map(word => this.vecs.get(word));
+        // Merge OddOneOut words into scatter list without removal
+        this.scatterWords = [...new Set([...this.scatterWords, ...canonicalWords])];
+
+        const vectors = canonicalWords.map(word => this.vecs.get(word));
         const similarityMatrix = this.buildSimilarityMatrix(vectors);
-        const outlier = this.computeOutlier(words, similarityMatrix);
+        const outlier = this.computeOutlier(canonicalWords, similarityMatrix);
         const {points, linkMetrics} = this.projectOddOneOutTo2D(similarityMatrix);
 
         // Select the outlier from OddOneOut in scatter; clear the similarity lines
@@ -1243,7 +1247,7 @@ class Demo {
 
         result.innerText = outlier.word;
         message.innerText = `Odd one out: ${outlier.word} (avg cosine: ${outlier.score.toFixed(3)})`;
-        this.renderOddOneOutPlot(points, words, outlier.index, similarityMatrix, outlier.scores, linkMetrics);
+        this.renderOddOneOutPlot(points, canonicalWords, outlier.index, similarityMatrix, outlier.scores, linkMetrics);
     }
 
     cosine(vecA, vecB) {
@@ -1291,18 +1295,15 @@ class Demo {
             similarityEpsilon: 1e-6,
             chargeStrength: -0.6,
             collideRadius: 0.25,
-            iterations: 260,
-            initialJitter: 0.4 // initial jitter for the nodes, larger for more randomization
+            iterations: 260
         };
 
-        const nodes = new Array(n).fill(0).map((_, i) => {
-            const angle = (2 * Math.PI * i) / n;
-            return {
-                id: i,
-                x: Math.cos(angle) + (Math.random() - 0.5) * springConfig.initialJitter,
-                y: Math.sin(angle) + (Math.random() - 0.5) * springConfig.initialJitter
-            };
-        });
+        const initialPoints = this.computeOddOneOutMdsPoints(similarityMatrix);
+        const nodes = initialPoints.map((point, i) => ({
+            id: i,
+            x: point.x,
+            y: point.y
+        }));
 
         const pairSimilarities = [];
         for (let i = 0; i < n; i++) {
@@ -1366,6 +1367,51 @@ class Demo {
         const points = nodes.map(node => ({x: node.x, y: node.y}));
         const linkMetrics = this.computeOddOneOutLinkMetrics(links);
         return {points, linkMetrics};
+    }
+
+    computeOddOneOutMdsPoints(similarityMatrix) {
+        const n = similarityMatrix.length;
+        if (n === 0) {
+            return [];
+        }
+
+        const distancesSquared = similarityMatrix.map((row, i) =>
+            row.map((similarity, j) => {
+                if (i === j) {
+                    return 0;
+                }
+                const distance = Math.max(0, 1 - similarity);
+                return distance * distance;
+            })
+        );
+
+        const rowMeans = distancesSquared.map(row =>
+            row.reduce((sum, value) => sum + value, 0) / n
+        );
+        const colMeans = distancesSquared[0].map((_, j) =>
+            distancesSquared.reduce((sum, row) => sum + row[j], 0) / n
+        );
+        const totalMean = rowMeans.reduce((sum, value) => sum + value, 0) / n;
+
+        const gramMatrix = distancesSquared.map((row, i) =>
+            row.map((value, j) => -0.5 * (value - rowMeans[i] - colMeans[j] + totalMean))
+        );
+
+        const eigen = this.jacobiEigenDecomposition(gramMatrix)
+            .sort((a, b) => b.value - a.value);
+
+        const first = eigen[0];
+        const second = eigen[1];
+        if (!first || first.value <= 0) {
+            return this.circularOddOneOutPoints(n);
+        }
+
+        const xScale = Math.sqrt(first.value);
+        const yScale = second && second.value > 0 ? Math.sqrt(second.value) : 0;
+        return new Array(n).fill(0).map((_, i) => ({
+            x: first.vector[i] * xScale,
+            y: yScale === 0 ? 0 : second.vector[i] * yScale
+        }));
     }
 
     computeOddOneOutLinkMetrics(links) {
