@@ -252,7 +252,10 @@ class Demo {
                 continue;
             }
             const target = entries[0];
-            const words = entries.slice(1);
+            // drop censored neighbors, then keep the remained top 10 as neighbors
+            const words = entries.slice(1)
+                .filter(word => !this.CENSORED_WORDS.has(word))
+                .slice(0, this.NAVIGATOR_NEIGHBOR_COUNT);
             nearestWords.set(target, words);
         }
         return nearestWords;
@@ -1276,7 +1279,11 @@ class Demo {
             .map(word => [word, vecY.dot(this.vecs.get(word))]);
 
         wordAnalogyPairs.sort((a, b) => b[1] - a[1]);
-        const nearestAnalogyWords = wordAnalogyPairs.slice(0, 10).map(pair => pair[0]);
+        // drop censored words from analogy results
+        const nearestAnalogyWords = wordAnalogyPairs
+            .filter(pair => !this.CENSORED_WORDS.has(pair[0]))
+            .slice(0, 10)
+            .map(pair => pair[0]);
         const wordWstar = nearestAnalogyWords[0];
 
         // add nearest words to Y to nearest word list (#12)
