@@ -150,6 +150,10 @@ class Demo {
         this.NAVIGATOR_NEIGHBOR_COUNT = 10;
         this.NAVIGATOR_MAX_STEPS = 7;
         this.NAVIGATOR_PATH_LINE_TEXT_GAP = 4; // pixel gap between path lines and word
+
+        // Adding censored words list. Those words are kept in the embedding model, but hidden (censored) from user's view.
+        this.CENSORED_WORDS = new Set();
+        this.CENSORED_WORDS_URL = "censored_word_list.txt";
     }
 
     cloneFeatureWordsPairs(featureWordsPairs) {
@@ -252,6 +256,31 @@ class Demo {
             nearestWords.set(target, words);
         }
         return nearestWords;
+    }
+
+    // Load censored word list
+    // If open failed: the set stays empty so nothing breaks
+    async loadCensoredWords() {
+        try {
+            const response = await fetch(this.CENSORED_WORDS_URL);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const text = await response.text();
+            for (const line of text.split(/\n/)) {
+                const word = line.trim().toLowerCase();
+                if (word !== "") {
+                    this.CENSORED_WORDS.add(word);
+                }
+            }
+        } catch (e) {
+            console.warn(`Could not load censored word list from "${this.CENSORED_WORDS_URL}":`, e);
+        }
+    }
+
+    // A word is usable only if it exists in the model and is not censored
+    isUsableWord(word) {
+        return this.vocab.has(word) && !this.CENSORED_WORDS.has(word);
     }
 
     sanitizeFeatureWordsByVocab() {
@@ -1147,7 +1176,7 @@ class Demo {
                 removedWords.push(word);
                 wordModified = true;
             } else { // add word if in vocab
-                if (this.vocab.has(word)) {
+                if (this.isUsableWord(word)) {
                     this.scatterWords.push(word);
                     addedWords.push(word);
                     wordModified = true;
@@ -1222,7 +1251,7 @@ class Demo {
 
         // Handle not found input words gracefully
         for (const word of inputWords) {
-            if (!(this.vocab.has(word))) {
+            if (!this.isUsableWord(word)) {
                 document.getElementById("analogy-message").innerText = `"${word}" not found`;
                 return;
             }
@@ -1309,7 +1338,7 @@ class Demo {
         }
 
         for (const word of words) {
-            if (!this.vocab.has(word)) {
+            if (!this.isUsableWord(word)) {
                 markOddOneOutInputError(`"${word}" not found`);
                 return;
             }
@@ -2056,7 +2085,7 @@ class Demo {
         // ensure all words in vocab
         for (let j=0; j<2; j++) {
             for (const word of featureWordsPairInput[j]) {
-                if (!this.vocab.has(word)) {
+                if (!this.isUsableWord(word)) {
                     this.setFeatureInlineMessage(featureIdx, `"${word}" not found`);
                     return false;
                 }
@@ -2472,11 +2501,11 @@ class Demo {
             setError("Please enter both a start word and a target word.");
             return;
         }
-        if (!this.vocab.has(startWord)) {
+        if (!this.isUsableWord(startWord)) {
             setError(`"${startWord}" not found in this embedding.`);
             return;
         }
-        if (!this.vocab.has(targetWord)) {
+        if (!this.isUsableWord(targetWord)) {
             setError(`"${targetWord}" not found in this embedding.`);
             return;
         }
@@ -3300,6 +3329,9 @@ class Demo {
 
     // fetch wordvecs locally and process
     async main() {
+        // load censored words before any user interaction
+        await this.loadCensoredWords();
+
         // fill default feature for scatterplot before model load
         this.fillDimensionDefault();
         this.resetDropdownAxes();
