@@ -1995,7 +1995,7 @@ class Demo {
         const plotContainer = document.getElementById("odd-one-out-plot");
 
         const state = {
-            message: message ? message.innerText : "",
+            message: message ? message.innerHTML : "",
             messageIsError: Boolean(message && message.classList.contains("odd-one-out-error")),
             result: result ? result.innerText : "----",
             plotData: null,
@@ -2020,7 +2020,7 @@ class Demo {
         const message = document.getElementById("odd-one-out-message");
         if (message) {
             message.classList.toggle("odd-one-out-error", Boolean(state.messageIsError));
-            message.innerText = state.message || "";
+            message.innerHTML = state.message || "";
         }
 
         const result = document.getElementById("odd-one-out-result");
