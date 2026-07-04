@@ -1370,8 +1370,18 @@ class Demo {
 
         message.classList.remove("odd-one-out-error");
         const clusterAvg = this.computeClusterAverageCosine(outlier.index, similarityMatrix);
-        message.innerText =
-            `Odd One Out: ${outlier.word} (avg odd one cosine: ${outlier.score.toFixed(3)}); avg in-group cosine: ${clusterAvg.toFixed(3)}`;
+        const makeColoredValue = (value, color) => {
+            const span = document.createElement("span");
+            span.style.color = color;
+            span.textContent = value.toFixed(3);
+            return span;
+        };
+        message.replaceChildren(
+            document.createTextNode(`Odd One Out: ${outlier.word} (avg odd one cosine: `),
+            makeColoredValue(outlier.score, "#d62728"), // make outlier cosine red
+            document.createTextNode("); avg in-group cosine: "),
+            makeColoredValue(clusterAvg, "#1f77b4") // make cluster cosine blue
+        );
         result.innerText = outlier.word;
         this.renderOddOneOutPlot(points, words, outlier.index, similarityMatrix, outlier.scores, linkMetrics);
     }
